@@ -1,10 +1,16 @@
 use std::env;
 
 fn infer_radix_and_parse_num(input: &str) -> Result<(u64, u32), Box<dyn std::error::Error>> {
-    let (prefix, num) = if input.len() > 2 {
-        (&input[..2], &input[2..])
+    let (prefix, num) = if input.starts_with("0x") {
+        ("0x", &input[2..]) 
+    } else if input.starts_with("0o") {
+        ("0o", &input[2..]) 
+    } else if input.starts_with("0b") {
+        ("0b", &input[2..]) 
+    } else if input.chars().all(|c| c.is_digit(10)) {
+        ("", input)
     } else {
-        ("", input) // assume decimal
+        return Err("invalid number format".into());
     };
 
     let base = match prefix.to_lowercase().as_str() {
@@ -12,7 +18,7 @@ fn infer_radix_and_parse_num(input: &str) -> Result<(u64, u32), Box<dyn std::err
         "0o" => 8,
         "0b" => 2,
         "" => 10,
-        _ => { return Err("unknown radix".into()); }
+        _ => unreachable!("check is done in the if else if block")
     };
 
     let parsed_num = u64::from_str_radix(num, base)?;
@@ -70,5 +76,57 @@ fn main() {
             }
         }
         Err(e) => eprintln!("ERR: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hexadecimal() {
+        let result = infer_radix_and_parse_num("0x1A").unwrap();
+        assert_eq!(result, (26, 16));
+    }
+
+    #[test]
+    fn test_binary() {
+        let result = infer_radix_and_parse_num("0b101").unwrap();
+        assert_eq!(result, (5, 2));
+    }
+
+    #[test]
+    fn test_octal() {
+        let result = infer_radix_and_parse_num("0o17").unwrap();
+        assert_eq!(result, (15, 8));
+    }
+
+    #[test]
+    fn test_decimal() {
+        let result = infer_radix_and_parse_num("123").unwrap();
+        assert_eq!(result, (123, 10));
+    }
+
+    #[test]
+    fn test_invalid_prefix() {
+        let result = infer_radix_and_parse_num("0z123");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "invalid number format");
+    }
+
+    #[test]
+    fn test_empty_input() {
+        let result = infer_radix_and_parse_num("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_number_for_base() {
+        let result = infer_radix_and_parse_num("0b123"); 
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "invalid digit found in string"
+        ); // error happens in `u64::from_str_radix` with error message from ParseIntError at https://doc.rust-lang.org/src/core/num/error.rs.html#137
     }
 }
