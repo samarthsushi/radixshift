@@ -1,132 +1,116 @@
 use std::env;
 
-fn infer_radix_and_parse_num(input: &str) -> Result<(u64, u32), Box<dyn std::error::Error>> {
-    let (prefix, num) = if input.starts_with("0x") {
-        ("0x", &input[2..]) 
-    } else if input.starts_with("0o") {
-        ("0o", &input[2..]) 
-    } else if input.starts_with("0b") {
-        ("0b", &input[2..]) 
-    } else if input.chars().all(|c| c.is_digit(10)) {
-        ("", input)
-    } else {
-        return Err("invalid number format".into());
-    };
-
-    let base = match prefix.to_lowercase().as_str() {
-        "0x" => 16,
-        "0o" => 8,
-        "0b" => 2,
-        "" => 10,
-        _ => unreachable!("check is done in the if else if block")
-    };
-
-    let parsed_num = u64::from_str_radix(num, base)?;
-    Ok((parsed_num, base))
-}
-
-fn format_to_base(number: u64, output_base: u32) -> Result<String, Box<dyn std::error::Error>> {
-    match output_base {
-        10 => Ok(number.to_string()),       
-        16 => Ok(format!("{:X}", number)),  
-        2 => Ok(format!("{:b}", number)),  
-        8 => Ok(format!("{:o}", number)),  
-        _ => Err("unsupported output base.".into()),
+fn radixshift(number: &str, base_from: f64, base_to: f64) -> Result<String, String> {
+    if base_from < 1.0 || base_to < 1.0 {
+        return Err("bases must be greater than or equal to 1".to_string());
     }
+
+    let parts: Vec<&str> = number.split('.').collect();
+    if parts.len() > 2 {
+        return Err("invalid number".to_string());
+    }
+
+    let integer_part = parts[0];
+    let fractional_part = if parts.len() == 2 { parts[1] } else { "" };
+
+    let decimal_value = to_decimal(integer_part, fractional_part, base_from)?;
+    let converted_value = from_decimal(decimal_value, base_to)?;
+
+    Ok(converted_value)
 }
 
-fn print_usage(args0: &str) {
-    eprintln!(
-        "usage: {args0} <input_number> <output_base>
-supported formats for <input_number>:
-  - hexadecimal: 0x1A
-  - binary:      0b1101
-  - octal:       0o17
-  - decimal:     123
-supported output bases:
-  - 2  - binary
-  - 8  - octal
-  - 10 - decimal
-  - 16 - hexadecimal
-examples:
-    {args0} 0x1A 10   -> hex to decimal
-    {args0} 26 2      -> decimal to binary"
-    );
+fn to_decimal(integer_part: &str, fractional_part: &str, base_from: f64) -> Result<f64, String> {
+    let integer_value = integer_part
+        .chars()
+        .rev()
+        .enumerate()
+        .try_fold(0.0, |sum, (i, c)| {
+            c.to_digit(36)
+                .map(|digit| sum + (digit as f64) * base_from.powi(i as i32))
+                .ok_or("Invalid digit in integer part.".to_string())
+        })?;
+
+    let fractional_value = fractional_part
+        .chars()
+        .enumerate()
+        .try_fold(0.0, |sum, (i, c)| {
+            c.to_digit(36)
+                .map(|digit| sum + (digit as f64) * base_from.powi(-(i as i32 + 1)))
+                .ok_or("Invalid digit in fractional part.".to_string())
+        })?;
+
+    Ok(integer_value + fractional_value)
+}
+
+fn from_decimal(decimal_value: f64, base_to: f64) -> Result<String, String> {
+    let mut result = String::new();
+
+    let integer_part = decimal_value.floor() as u64;
+    let mut integer_result = String::new();
+    let mut temp = integer_part;
+    while temp > 0 {
+        let digit = (temp % base_to as u64) as u32;
+        integer_result.insert(0, std::char::from_digit(digit, 36).unwrap());
+        temp /= base_to as u64;
+    }
+
+    if integer_result.is_empty() {
+        integer_result.push('0');
+    }
+    result.push_str(&integer_result);
+
+    let mut fractional_part = decimal_value - decimal_value.floor();
+    if fractional_part > 0.0 {
+        result.push('.');
+        for _ in 0..10 {
+            fractional_part *= base_to;
+            let digit = fractional_part.floor() as u32;
+            result.push(std::char::from_digit(digit, 36).unwrap());
+            fractional_part -= fractional_part.floor();
+            if fractional_part.abs() < 1e-10 {
+                break;
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() != 3 {
-        print_usage(&args[0]);
+    if args.len() != 4 {
+        eprintln!("usage: {{num}} {{base from}} {{base to}}");
         return;
     }
 
-    let input_number = &args[1];
-    let output_base: u32 = args[2].parse().unwrap_or_else(|_| {
-        eprintln!("ERR: base should be 2, 8, 10, 16");
-        std::process::exit(1);
-    });
-
-    match infer_radix_and_parse_num(input_number) {
-        Ok((number, _input_base)) => {
-            match format_to_base(number, output_base) {
-                Ok(result) => println!("{result}"),
-                Err(e) => eprintln!("ERR: {e}"),
-            }
+    let base_from: f64 = match args[2].parse() {
+        Ok(base) if base > 1.0 => base,
+        _ => {
+            eprintln!("err: BASE_FROM must be a valid number greater than 1.");
+            return;
         }
-        Err(e) => eprintln!("ERR: {e}"),
+    };
+
+    let base_to: f64 = match args[3].parse() {
+        Ok(base) if base >= 1.0 => base,
+        _ => {
+            eprintln!("err: BASE_TO must be a valid number greater than or equal to 1.");
+            return;
+        }
+    };
+
+    match radixshift(&args[1], base_from, base_to) {
+        Ok(converted) => println!(
+            "{} (base {:.2}) -> {} (base {:.2})",
+            &args[1], base_from, converted, base_to
+        ),
+        Err(e) => eprintln!("err: {}", e),
     }
+
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hexadecimal() {
-        let result = infer_radix_and_parse_num("0x1A").unwrap();
-        assert_eq!(result, (26, 16));
-    }
-
-    #[test]
-    fn test_binary() {
-        let result = infer_radix_and_parse_num("0b101").unwrap();
-        assert_eq!(result, (5, 2));
-    }
-
-    #[test]
-    fn test_octal() {
-        let result = infer_radix_and_parse_num("0o17").unwrap();
-        assert_eq!(result, (15, 8));
-    }
-
-    #[test]
-    fn test_decimal() {
-        let result = infer_radix_and_parse_num("123").unwrap();
-        assert_eq!(result, (123, 10));
-    }
-
-    #[test]
-    fn test_invalid_prefix() {
-        let result = infer_radix_and_parse_num("0z123");
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "invalid number format");
-    }
-
-    #[test]
-    fn test_empty_input() {
-        let result = infer_radix_and_parse_num("");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_invalid_number_for_base() {
-        let result = infer_radix_and_parse_num("0b123"); 
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "invalid digit found in string"
-        ); // error happens in `u64::from_str_radix` with error message from ParseIntError at https://doc.rust-lang.org/src/core/num/error.rs.html#137
-    }
+    
 }
